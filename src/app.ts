@@ -6,7 +6,7 @@ import express, { Request, Response, Express } from "express";
 interface Customer {
     id: number;
     name: string;
-    status: "GOLD" | "SILVER" | "BRONZE";
+    status: "PLATINUM" | "GOLD" | "SILVER" | "BRONZE";
     points: number;
     lastPurchaseDate: string;
     email?: string;
@@ -36,6 +36,7 @@ const customers: Customer[] = [
         email: "jane.doe@email.com",
         joinDate: "2023-01-20",
         notifications: false,
+         lastStatusChange: "2024-08-15T00:00:00.000Z" 
     },
 ];
 
@@ -60,12 +61,43 @@ app.get("/api/customers/:id", (req: Request, res: Response): void => {
     }
 });
 
-/**
- * Record a purchase for a customer and update status based on points.
- * @route POST /api/customers/:id/purchase
- * @param req - Express request object
- * @param res - Express response object
- */
+app.post("/api/customers/:id/adjust-points", (req: Request, res: Response): void => {
+    const customerId: number = parseInt(req.params.id);
+    const adjustment: number = req.body.adjustment;
+
+    if (typeof adjustment !== "number") {
+        res.status(400).send("Adjustment amount must be a number");
+        return;
+    }
+
+    const customer: Customer | undefined = customers.find(
+        (c) => c.id === customerId
+    );
+
+    if (!customer) {
+        res.status(404).send("Customer not found");
+        return;
+    }
+
+    // Apply adjustment, clamp to 0
+    customer.points = Math.max(0, customer.points + adjustment);
+
+    // Update status
+    if (customer.points >= 1000) {
+        customer.status = "PLATINUM";
+    } else if (customer.points >= 750) {
+        customer.status = "GOLD";
+    } else if (customer.points >= 500) {
+        customer.status = "SILVER";
+    } else {
+        customer.status = "BRONZE";
+    }
+
+    customer.lastStatusChange = new Date().toISOString();
+
+    res.json(customer);
+});
+
 app.post("/api/customers/:id/purchase", (req: Request, res: Response): void => {
     const customerId: number = parseInt(req.params.id);
     const customer: Customer | undefined = customers.find(
@@ -78,17 +110,48 @@ app.post("/api/customers/:id/purchase", (req: Request, res: Response): void => {
 
     const purchaseAmount: number = req.body.amount;
     const storeLocation: string = req.body.storeLocation;
-
-    customer.points += Math.floor(purchaseAmount / 10);
     customer.lastPurchaseDate = new Date().toISOString();
 
-    if (customer.points >= 750) {
-        customer.status = "GOLD";
-        customer.lastStatusChange = new Date().toISOString();
-    } else if (customer.points >= 500) {
-        customer.status = "SILVER";
-        customer.lastStatusChange = new Date().toISOString();
+    customer.points += Math.floor(purchaseAmount / 10);
+    let multiplier = 1;
+
+    if (customer.status === "GOLD") {
+        multiplier *= 1.2;
+    } else if (customer.status === "PLATINUM") {
+        multiplier *= 2;
     }
+
+    const pointsEarned = Math.floor(customer.points * multiplier);
+    customer.points += pointsEarned;
+    customer.lastPurchaseDate = new Date().toISOString();
+    
+ const now = Date.now();
+    const gracePeriod = 30 * 24 * 60 * 60 * 1000; // 30 days in ms
+    const lastChange = customer.lastStatusChange
+        ? new Date(customer.lastStatusChange).getTime()
+        : 0;
+
+    let newStatus: Customer["status"] = "BRONZE";
+
+    if (customer.points >= 1000) {
+        customer.status = "PLATINUM";
+    }else if (customer.points >= 750) {
+        // Apply GOLD grace period
+        if (
+            customer.status === "GOLD" &&
+            now - lastChange <= gracePeriod
+        ) {
+            newStatus = "GOLD"; // Still in grace
+        } else {
+            newStatus = "GOLD"; // Earned
+        }
+    } else if (customer.points >= 500) {
+        newStatus = "SILVER";
+    }
+    else
+        customer.status = "BRONZE";
+        customer.lastStatusChange = new Date().toISOString();
+    
 
     res.json(customer);
 });
